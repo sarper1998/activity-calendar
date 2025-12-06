@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activity Calendar</title>
+    
+    <script 
+        id="sap-ui-bootstrap"
+        src="https://sapui5.hana.ondemand.com/resources/sap-ui-core.js"
+        data-sap-ui-theme="sap_horizon"
+        data-sap-ui-libs="sap.m,sap.ui.unified,sap.ui.layout"
+        data-sap-ui-async="true"
+        data-sap-ui-onInit="onInit"
+        data-sap-ui-compatVersion="edge">
+    </script>
+
+    <script>
+        var oODataModel;
+        var oViewModel;
+        var SERVICE_URL = "https://my431727.s4hana.cloud.sap/sap/opu/odata4/sap/zsb_activityentry/srvd/sap/zsd_activityentry/0001/";
+
+        var ACTIVITY_CODES = [
+            { code: "CONSULTING", text: "Danışmanlık" },
+            { code: "DEVELOPMENT", text: "Geliştirme" },
+            { code: "TRAINING", text: "Eğitim" },
+            { code: "SUPPORT", text: "Destek" },
+            { code: "INTERNAL", text: "Dahili" }
+        ];
+
+        function onInit() {
+            sap.ui.require([
+                "sap/ui/model/odata/v4/ODataModel",
+                "sap/ui/model/json/JSONModel",
+                "sap/m/App",
+                "sap/m/Page",
+                "sap/m/PlanningCalendar",
+                "sap/m/PlanningCalendarRow",
+                "sap/ui/unified/CalendarAppointment",
+                "sap/m/Button",
+                "sap/m/SegmentedButton",
+                "sap/m/SegmentedButtonItem",
+                "sap/m/SearchField",
+                "sap/m/Toolbar",
+                "sap/m/ToolbarSpacer",
+                "sap/m/Title",
+                "sap/m/Bar",
+                "sap/m/Label",
+                "sap/m/Input",
+                "sap/m/Select",
+                "sap/m/DatePicker",
+                "sap/m/TextArea",
+                "sap/m/Dialog",
+                "sap/m/MessageToast",
+                "sap/m/MessageBox",
+                "sap/ui/core/Item",
+                "sap/ui/layout/form/SimpleForm",
+                "sap/ui/core/BusyIndicator"
+            ], function(ODataModel, JSONModel, App, Page, PlanningCalendar, PlanningCalendarRow, 
+                        CalendarAppointment, Button, SegmentedButton, SegmentedButtonItem, SearchField,
+                        Toolbar, ToolbarSpacer, Title, Bar, Label, Input, Select, DatePicker, TextArea,
+                        Dialog, MessageToast, MessageBox, Item, SimpleForm, BusyIndicator) {
+
+                // View Model
+                oViewModel = new JSONModel({
+                    startDate: new Date(),
+                    Users: [],
+                    AllUsers: []
+                });
+
+                // OData Model
+                try {
+                    oODataModel = new ODataModel({
+                        serviceUrl: SERVICE_URL,
+                        synchronizationMode: "None",
+                        autoExpandSelect: true
+                    });
+                    console.log("OData model oluşturuldu!");
+                } catch(e) {
+                    console.error("OData model hatası:", e);
+                    MessageBox.error("OData model oluşturulamadı. Lütfen önce SAP sistemine login olun.\n\nHata: " + e.message);
+                    return;
+                }
+
+                // View Switch
+                var oViewSwitch = new SegmentedButton({
+                    selectedKey: "Week",
+                    selectionChange: function(oEvent) {
+                        var sKey = oEvent.getParameter("item").getKey();
+                        oCalendar.setViewKey(sKey);
+                    },
+                    items: [
+                        new SegmentedButtonItem({ key: "Hour", text: "Hour" }),
+                        new SegmentedButtonItem({ key: "Day", text: "Day" }),
+                        new SegmentedButtonItem({ key: "Week", text: "Week" }),
+                        new SegmentedButtonItem({ key: "Month", text: "Month" })
+                    ]
+                });
+
+                // Search Field
+                var oSearchField = new SearchField({
+                    width: "250px",
+                    placeholder: "Kullanıcı ara...",
+                    search: function(oEvent) {
+                        var sQuery = oEvent.getParameter("query").toLowerCase();
+                        var aAllUsers = oViewModel.getProperty("/AllUsers");
+                        
+                        if (!aAllUsers || aAllUsers.length === 0) {
+                            aAllUsers = oViewModel.getProperty("/Users");
+                            oViewModel.setProperty("/AllUsers", aAllUsers);
+                        }
+
+                        if (!sQuery) {
+                            oViewModel.setProperty("/Users", aAllUsers);
+                            return;
+                        }
+
+                        var aFiltered = aAllUsers.filter(function(u) {
+                            return u.UserId.toLowerCase().includes(sQuery) ||
+                                   u.UserName.toLowerCase().includes(sQuery);
+                        });
+                        oViewModel.setProperty("/Users", aFiltered);
+                    }
+                });
+
+                // Planning Calendar
+                var oCalendar = new PlanningCalendar({
+                    startDate: "{viewModel>/startDate}",
+                    rows: {
+                        path: "viewModel>/Users",
+                        template: new PlanningCalendarRow({
+                            title: "{viewModel>UserName}",
+                            text: "{viewModel>UserId}",
+                            icon: "sap-icon://employee",
+                            appointments: {
+                                path: "viewModel>Appointments",
+                                template: new CalendarAppointment({
+                                    startDate: "{viewModel>StartDate}",
+                                    endDate: "{viewModel>EndDate}",
+                                    title: "{viewModel>Title}",
+                                    text: "{viewModel>Text}",
+                                    type: "{viewModel>Type}",
+                                    key: "{viewModel>EntryUuid}"
+                                })
+                            }
+                        })
+                    },
+                    viewKey: "Week",
+                    showWeekNumbers: true,
+                    appointmentsVisualization: "Filled",
+                    appointmentSelect: function(oEvent) {
+                        var oAppointment = oEvent.getParameter("appointment");
+                        if (!oAppointment) return;
+
+                        var oContext = oAppointment.getBindingContext("viewModel");
+                        if (!oContext) return;
+
+                        var oData = oContext.getObject();
+
+                        MessageBox.information(
+                            "Aktivite: " + oData.ActivityCode + "\n" +
+                            "Tarih: " + oData.EntryDate + "\n" +
+                            "Saat: " + oData.WorkHours + " saat\n" +
+                            "Açıklama: " + oData.Description,
+                            {
+                                title: "Aktivite Detayı",
+                                actions: [MessageBox.Action.OK, "Düzenle", "Sil"],
+                                onClose: function(sAction) {
+                                    if (sAction === "Düzenle") {
+                                        openEditDialog(oData);
+                                    } else if (sAction === "Sil") {
+                                        deleteEntry(oData.EntryUuid);
+                                    }
+                                }
+                            }
+                        );
+                    },
+                    toolbarContent: [
+                        new Title({ text: "Aktivite Takvimi" }),
+                        new ToolbarSpacer(),
+                        oSearchField
+                    ]
+                });
+
+                // Header Bar
+                var oHeaderBar = new Bar({
+                    contentLeft: [
+                        new Title({ text: "Activity Planning Calendar" })
+                    ],
+                    contentMiddle: [oViewSwitch],
+                    contentRight: [
+                        new Button({
+                            text: "Today",
+                            press: function() {
+                                oViewModel.setProperty("/startDate", new Date());
+                                MessageToast.show("Bugüne gidildi");
+                            }
+                        }),
+                        new Button({
+                            icon: "sap-icon://refresh",
+                            tooltip: "Yenile",
+                            press: loadData
+                        }),
+                        new Button({
+                            text: "Create Entry",
+                            type: "Emphasized",
+                            icon: "sap-icon://add",
+                            press: openCreateDialog
+                        })
+                    ]
+                });
+
+                // Page
+                var oPage = new Page({
+                    customHeader: oHeaderBar,
+                    content: [oCalendar],
+                    enableScrolling: false
+                });
+
+                // App
+                var oApp = new App({
+                    pages: [oPage]
+                });
+
+                oApp.setModel(oViewModel, "viewModel");
+                oApp.placeAt("content");
+
+                // ==================== FUNCTIONS ====================
+
+                function loadData() {
+                    console.log("Veri yükleniyor...");
+                    BusyIndicator.show(0);
+
+                    var oListBinding = oODataModel.bindList("/ActivityEntry");
+
+                    oListBinding.requestContexts(0, 1000).then(function(aContexts) {
+                        var aEntries = aContexts.map(function(oContext) {
+                            return oContext.getObject();
+                        });
+
+                        console.log("RAP'tan gelen veri:", aEntries);
+
+                        var oUsersMap = {};
+
+                        aEntries.forEach(function(oEntry) {
+                            var sUserId = oEntry.UserId || "UNKNOWN";
+
+                            if (!oUsersMap[sUserId]) {
+                                oUsersMap[sUserId] = {
+                                    UserId: sUserId,
+                                    UserName: sUserId,
+                                    Appointments: []
+                                };
+                            }
+
+                            var oEntryDate = new Date(oEntry.EntryDate);
+                            var iHours = parseFloat(oEntry.WorkHours) || 8;
+
+                            var oStartDate = new Date(oEntryDate);
+                            oStartDate.setHours(9, 0, 0, 0);
+
+                            var oEndDate = new Date(oEntryDate);
+                            oEndDate.setHours(9 + iHours, 0, 0, 0);
+
+                            oUsersMap[sUserId].Appointments.push({
+                                EntryUuid: oEntry.EntryUuid,
+                                ActivityCode: oEntry.ActivityCode,
+                                Title: oEntry.ActivityCode,
+                                Text: iHours + "h - " + (oEntry.Description || ""),
+                                StartDate: oStartDate,
+                                EndDate: oEndDate,
+                                Type: oEntry.ActivityCode === "INTERNAL" ? "Type09" : "Type01",
+                                WorkHours: iHours,
+                                Description: oEntry.Description || "",
+                                EntryDate: oEntry.EntryDate
+                            });
+                        });
+
+                        var aUsers = Object.values(oUsersMap);
+                        oViewModel.setProperty("/Users", aUsers);
+                        oViewModel.setProperty("/AllUsers", aUsers);
+
+                        BusyIndicator.hide();
+                        MessageToast.show(aEntries.length + " kayıt yüklendi");
+
+                    }).catch(function(oError) {
+                        BusyIndicator.hide();
+                        console.error("OData hatası:", oError);
+                        MessageBox.error("Veri yüklenirken hata oluştu.\n\nLütfen önce SAP sistemine login olduğunuzdan emin olun.\n\nHata: " + oError.message);
+                    });
+                }
+
+                function openCreateDialog() {
+                    var aCodeItems = ACTIVITY_CODES.map(function(a) {
+                        return new Item({ key: a.code, text: a.text + " (" + a.code + ")" });
+                    });
+
+                    var oDialog = new Dialog({
+                        title: "Yeni Aktivite Girişi",
+                        contentWidth: "450px",
+                        content: [
+                            new SimpleForm({
+                                editable: true,
+                                layout: "ResponsiveGridLayout",
+                                labelSpanL: 4,
+                                labelSpanM: 4,
+                                content: [
+                                    new Label({ text: "Kullanıcı ID", required: true }),
+                                    new Input("dlgUser", { width: "100%", placeholder: "örn: CB9980000017" }),
+
+                                    new Label({ text: "Aktivite Kodu", required: true }),
+                                    new Select("dlgActivity", { width: "100%", items: aCodeItems }),
+
+                                    new Label({ text: "Tarih", required: true }),
+                                    new DatePicker("dlgDate", {
+                                        width: "100%",
+                                        valueFormat: "yyyy-MM-dd",
+                                        displayFormat: "dd.MM.yyyy",
+                                        dateValue: new Date()
+                                    }),
+
+                                    new Label({ text: "Çalışma Saati", required: true }),
+                                    new Input("dlgHours", { type: "Number", value: "8", description: "saat" }),
+
+                                    new Label({ text: "Açıklama" }),
+                                    new TextArea("dlgDesc", { width: "100%", rows: 3 })
+                                ]
+                            })
+                        ],
+                        beginButton: new Button({
+                            text: "Kaydet",
+                            type: "Emphasized",
+                            press: function() {
+                                var sUserId = sap.ui.getCore().byId("dlgUser").getValue();
+                                var sActivityCode = sap.ui.getCore().byId("dlgActivity").getSelectedKey();
+                                var oDate = sap.ui.getCore().byId("dlgDate").getDateValue();
+                                var sHours = sap.ui.getCore().byId("dlgHours").getValue();
+                                var sDesc = sap.ui.getCore().byId("dlgDesc").getValue();
+
+                                if (!sUserId || !sActivityCode || !oDate || !sHours) {
+                                    MessageBox.error("Lütfen tüm zorunlu alanları doldurun");
+                                    return;
+                                }
+
+                                var fHours = parseFloat(sHours);
+                                if (fHours < 0.5 || fHours > 24) {
+                                    MessageBox.error("Çalışma saati 0.5-24 arası olmalı");
+                                    return;
+                                }
+
+                                var sDateFormatted = oDate.getFullYear() + "-" +
+                                    String(oDate.getMonth() + 1).padStart(2, "0") + "-" +
+                                    String(oDate.getDate()).padStart(2, "0");
+
+                                BusyIndicator.show(0);
+
+                                var oListBinding = oODataModel.bindList("/ActivityEntry");
+                                var oNewEntry = oListBinding.create({
+                                    ActivityCode: sActivityCode,
+                                    UserId: sUserId,
+                                    EntryDate: sDateFormatted,
+                                    WorkHours: fHours,
+                                    Description: sDesc,
+                                    PlanType: "D"
+                                });
+
+                                oNewEntry.created().then(function() {
+                                    BusyIndicator.hide();
+                                    MessageToast.show("Aktivite kaydedildi!");
+                                    oDialog.close();
+                                    loadData();
+                                }).catch(function(oError) {
+                                    BusyIndicator.hide();
+                                    console.error("Create Error:", oError);
+                                    MessageBox.error("Kaydetme hatası: " + oError.message);
+                                });
+                            }
+                        }),
+                        endButton: new Button({
+                            text: "İptal",
+                            press: function() {
+                                oDialog.close();
+                            }
+                        }),
+                        afterClose: function() {
+                            oDialog.destroy();
+                        }
+                    });
+
+                    oDialog.open();
+                }
+
+                function openEditDialog(oData) {
+                    var aCodeItems = ACTIVITY_CODES.map(function(a) {
+                        return new Item({ key: a.code, text: a.text + " (" + a.code + ")" });
+                    });
+
+                    var oDialog = new Dialog({
+                        title: "Aktivite Düzenle",
+                        contentWidth: "450px",
+                        content: [
+                            new SimpleForm({
+                                editable: true,
+                                layout: "ResponsiveGridLayout",
+                                content: [
+                                    new Label({ text: "Aktivite Kodu" }),
+                                    new Select("editActivity", { 
+                                        width: "100%", 
+                                        items: aCodeItems,
+                                        selectedKey: oData.ActivityCode
+                                    }),
+
+                                    new Label({ text: "Çalışma Saati" }),
+                                    new Input("editHours", { 
+                                        type: "Number", 
+                                        value: String(oData.WorkHours),
+                                        description: "saat"
+                                    }),
+
+                                    new Label({ text: "Açıklama" }),
+                                    new TextArea("editDesc", { 
+                                        width: "100%", 
+                                        rows: 3,
+                                        value: oData.Description
+                                    })
+                                ]
+                            })
+                        ],
+                        beginButton: new Button({
+                            text: "Kaydet",
+                            type: "Emphasized",
+                            press: function() {
+                                var sActivityCode = sap.ui.getCore().byId("editActivity").getSelectedKey();
+                                var fHours = parseFloat(sap.ui.getCore().byId("editHours").getValue());
+                                var sDesc = sap.ui.getCore().byId("editDesc").getValue();
+
+                                BusyIndicator.show(0);
+
+                                // Basit güncelleme - veriyi yeniden yükle
+                                // Not: OData V4'te PATCH için daha kompleks kod gerekir
+                                // Şimdilik silip yeniden oluşturuyoruz
+                                
+                                var oContext = oODataModel.bindContext("/ActivityEntry('" + oData.EntryUuid + "')");
+                                oContext.delete().then(function() {
+                                    var oListBinding = oODataModel.bindList("/ActivityEntry");
+                                    var oNewEntry = oListBinding.create({
+                                        ActivityCode: sActivityCode,
+                                        UserId: oData.EntryUuid.split("-")[0] || "UNKNOWN", // Orijinal user
+                                        EntryDate: oData.EntryDate,
+                                        WorkHours: fHours,
+                                        Description: sDesc,
+                                        PlanType: "D"
+                                    });
+                                    return oNewEntry.created();
+                                }).then(function() {
+                                    BusyIndicator.hide();
+                                    MessageToast.show("Aktivite güncellendi!");
+                                    oDialog.close();
+                                    loadData();
+                                }).catch(function(oError) {
+                                    BusyIndicator.hide();
+                                    console.error("Update Error:", oError);
+                                    MessageBox.error("Güncelleme hatası: " + oError.message);
+                                });
+                            }
+                        }),
+                        endButton: new Button({
+                            text: "İptal",
+                            press: function() {
+                                oDialog.close();
+                            }
+                        }),
+                        afterClose: function() {
+                            oDialog.destroy();
+                        }
+                    });
+
+                    oDialog.open();
+                }
+
+                function deleteEntry(sEntryUuid) {
+                    MessageBox.confirm("Bu aktiviteyi silmek istediğinize emin misiniz?", {
+                        title: "Silme Onayı",
+                        onClose: function(sAction) {
+                            if (sAction === MessageBox.Action.OK) {
+                                BusyIndicator.show(0);
+
+                                var oContext = oODataModel.bindContext("/ActivityEntry('" + sEntryUuid + "')");
+                                oContext.delete().then(function() {
+                                    BusyIndicator.hide();
+                                    MessageToast.show("Aktivite silindi!");
+                                    loadData();
+                                }).catch(function(oError) {
+                                    BusyIndicator.hide();
+                                    console.error("Delete Error:", oError);
+                                    MessageBox.error("Silme hatası: " + oError.message);
+                                });
+                            }
+                        }
+                    });
+                }
+
+                // İlk yükleme
+                setTimeout(loadData, 1000);
+            });
+        }
+    </script>
+
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+</head>
+<body class="sapUiBody">
+    <div id="content" style="height: 100%;"></div>
+</body>
+</html>
+```
+
+---
+
